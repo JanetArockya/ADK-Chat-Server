@@ -1,0 +1,25 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "email": "livecheck@example.com",
+      "username": "livecheck",
+      "passwordHash": "$2b$10$aKv8r1BvHo4fM5AVWopAMOvLsqD2oB/RUlUBZIZ3W0B25x/Bxj15.",
+      "createdAt": "2026-04-21T11:57:22.873Z"
+    },
+    {
+      "id": 2,
+      "email": "usernew@gmail.com",
+      "username": "usernew",
+      "passwordHash": "$2b$10$HcOU6wiQRIKzNmChBVNKbuuUxChMGc50fbEJvbKb877tEmCXR4xGC",
+      "createdAt": "2026-04-21T11:58:11.838Z"
+    },
+    {
+      "id": 3,
+      "email": "lemon@gmail.com",
+      "username": "lemon",
+      "passwordHash": "$2b$10$XN3tNop5vGSp6wDJjbDLmuVifLcxS.aVsjvY1eALYodYEjfG7f3wy",
+      "createdAt": "2026-04-21T11:59:31.881Z"
+    }
+  ]
+}
