@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ChatApp - Real-time Web Chat Application
 
 A full-featured web-based chat application built with React, Vite, and Tailwind CSS on the frontend, and Express.js with Socket.io on the backend.
@@ -368,3 +369,6 @@ MIT
 ## Support
 
 For issues and questions, please create an issue in the repository.
+=======
+# ADK-Chat-Server
+>>>>>>> 6a46a420d0e2ae4daf47134576f902ee1ebb8036
