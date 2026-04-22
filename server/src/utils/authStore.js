@@ -1,226 +1,186 @@
-const fs = require("fs");
-const path = require("path");
-const bcrypt = require("bcrypt");
-
-const sessions = new Map();
-const usersById = new Map();
-const usersByEmail = new Map();
-const usersByUsername = new Map();
-const dataDir = path.join(__dirname, "..", "..", "data");
-const storePath = path.join(dataDir, "auth-store.json");
-let userIdCounter = 1;
-
-function loadStore() {
-  try {
-    if (!fs.existsSync(storePath)) {
-      return [];
-    }
-
-    const raw = fs.readFileSync(storePath, "utf8");
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed.users) ? parsed.users : [];
-  } catch (_error) {
-    return [];
-  }
-}
-
-function persistUsers() {
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-
-  const users = [...usersById.values()];
-  fs.writeFileSync(
-    storePath,
-    JSON.stringify({ users }, null, 2),
-    "utf8"
-  );
-}
-
-function normalizeEmail(email) {
-  return String(email || "").trim().toLowerCase();
-}
-
-function normalizeUsername(username) {
-  return String(username || "").trim().toLowerCase();
-}
+const bcrypt = require('bcrypt');
+const prisma = require('./prisma');
 
 function publicUser(user) {
-  return {
-    id: user.id,
-    email: user.email,
-    username: user.username,
-  };
+  return { id: user.id, email: user.email, username: user.username };
 }
 
-function hydrateUsers() {
-  const users = loadStore();
-
-  for (const user of users) {
-    usersById.set(user.id, user);
-    usersByEmail.set(normalizeEmail(user.email), user.id);
-    usersByUsername.set(normalizeUsername(user.username), user.id);
-    userIdCounter = Math.max(userIdCounter, Number(user.id) + 1);
+async function createUser({ email, username, password }) {
+  const emailKey = String(email).trim().toLowerCase();
+  const usernameKey = String(username).trim();
+  if (!emailKey || !usernameKey || !String(password || '').trim()) {
+    throw new Error('Email, username, and password are required');
+  }
+  try {
+    const user = await prisma.user.create({
+      data: {
+        email: emailKey,
+        username: usernameKey,
+        passwordHash: await bcrypt.hash(String(password), 10),
+      },
+    });
+    return publicUser(user);
+  } catch (err) {
+    if (err.code === 'P2002') {
+      const field = err.meta?.target?.join?.(',')?.includes('email') ? 'Email' : 'Username';
+      throw new Error(`${field} already in use`);
+    }
+    throw err;
   }
 }
 
-hydrateUsers();
-
-function getStoredUserByEmail(email) {
-  const id = usersByEmail.get(normalizeEmail(email));
-  return id ? usersById.get(id) : null;
-}
-
-function createUser({ email, username, password }) {
-  const emailKey = normalizeEmail(email);
-  const usernameKey = normalizeUsername(username);
-
-  if (!emailKey || !usernameKey || !String(password || "").trim()) {
-    throw new Error("Email, username, and password are required");
-  }
-
-  if (usersByEmail.has(emailKey)) {
-    throw new Error("Email already in use");
-  }
-
-  if (usersByUsername.has(usernameKey)) {
-    throw new Error("Username already in use");
-  }
-
-  const user = {
-    id: userIdCounter++,
-    email: emailKey,
-    username: String(username).trim(),
-    passwordHash: bcrypt.hashSync(String(password), 10),
-    createdAt: new Date().toISOString(),
-  };
-
-  usersById.set(user.id, user);
-  usersByEmail.set(emailKey, user.id);
-  usersByUsername.set(usernameKey, user.id);
-  persistUsers();
-
-  return publicUser(user);
-}
-
-function getUserById(id) {
-  const user = usersById.get(Number(id));
+async function getUserById(id) {
+  const user = await prisma.user.findUnique({ where: { id: Number(id) } });
   return user ? publicUser(user) : null;
 }
 
-function getUserByEmail(email) {
-  const user = getStoredUserByEmail(email);
+async function getUserByEmail(email) {
+  const user = await prisma.user.findUnique({
+    where: { email: String(email).trim().toLowerCase() },
+  });
   return user ? publicUser(user) : null;
 }
 
-function verifyCredentials(email, password) {
-  const user = getStoredUserByEmail(email);
-  if (!user) {
-    return null;
-  }
+async function getUserByUsername(username) {
+  const user = await prisma.user.findUnique({
+    where: { username: String(username).trim() },
+  });
+  return user ? publicUser(user) : null;
+}
 
-  const matches = bcrypt.compareSync(String(password || ""), user.passwordHash);
+async function verifyCredentials(email, password) {
+  const user = await prisma.user.findUnique({
+    where: { email: String(email).trim().toLowerCase() },
+  });
+  if (!user) return null;
+  const matches = await bcrypt.compare(String(password || ''), user.passwordHash);
   return matches ? publicUser(user) : null;
 }
 
-function getUserByUsername(username) {
-  const id = usersByUsername.get(normalizeUsername(username));
-  return id ? getUserById(id) : null;
-}
-
-function updateUser(userId, { username }) {
-  const id = Number(userId);
-  const user = usersById.get(id);
-  if (!user) {
-    return null;
-  }
-
-  if (typeof username === "string" && username.trim()) {
-    const usernameKey = normalizeUsername(username);
-    const existingId = usersByUsername.get(usernameKey);
-    if (existingId && existingId !== id) {
-      throw new Error("Username already in use");
-    }
-
-    usersByUsername.delete(normalizeUsername(user.username));
-    user.username = username.trim();
-    usersByUsername.set(usernameKey, id);
-    persistUsers();
-  }
-
-  return publicUser(user);
-}
-
-function searchUsers(query, excludeUserId) {
-  const q = String(query || "").trim().toLowerCase();
-  const excludedId = Number(excludeUserId);
-  const users = [...usersById.values()]
-    .filter((user) => user.id !== excludedId)
-    .filter((user) => {
-      if (!q) return true;
-      return (
-        user.username.toLowerCase().includes(q) ||
-        user.email.toLowerCase().includes(q)
-      );
-    })
-    .slice(0, 50)
-    .map(publicUser);
-
-  return users;
-}
-
-function createSession(user) {
-  const token = `dev_${Math.random().toString(36).slice(2)}_${Date.now()}`;
-  sessions.set(token, {
-    user: publicUser(user),
-    createdAt: new Date().toISOString(),
+async function updatePassword(userId, oldPassword, newPassword) {
+  const user = await prisma.user.findUnique({ where: { id: Number(userId) } });
+  if (!user) throw new Error('User not found');
+  const matches = await bcrypt.compare(String(oldPassword || ''), user.passwordHash);
+  if (!matches) throw new Error('Current password is incorrect');
+  await prisma.user.update({
+    where: { id: Number(userId) },
+    data: { passwordHash: await bcrypt.hash(String(newPassword), 10) },
   });
-  return token;
 }
 
-function getSession(token) {
-  const session = sessions.get(token);
-  return session ? session.user : null;
+async function deleteUser(userId) {
+  await prisma.user.delete({ where: { id: Number(userId) } });
 }
 
-function deleteSession(token) {
-  sessions.delete(token);
+async function searchUsers(query, excludeUserId) {
+  const q = String(query || '').trim();
+  const users = await prisma.user.findMany({
+    where: {
+      id: { not: Number(excludeUserId) },
+      ...(q
+        ? {
+            OR: [
+              { username: { contains: q, mode: 'insensitive' } },
+              { email: { contains: q, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    },
+    take: 50,
+  });
+  return users.map(publicUser);
 }
 
-function getUserSessions(userId) {
-  const id = Number(userId);
-  return [...sessions.entries()]
-    .filter(([, session]) => session.user.id === id)
-    .map(([token, session]) => ({
-      id: token,
-      token,
-      userId: session.user.id,
-      lastActive: session.createdAt,
-      browser: "Unknown Browser",
-      ipAddress: "127.0.0.1",
-    }));
+async function createSession(user, ipAddress, userAgent) {
+  const session = await prisma.session.create({
+    data: {
+      userId: Number(user.id),
+      ipAddress: ipAddress || 'unknown',
+      userAgent: userAgent || 'unknown',
+    },
+  });
+  return session.id;
 }
 
-function revokeAllUserSessions(userId, keepToken) {
-  const id = Number(userId);
-  for (const [token, session] of sessions.entries()) {
-    if (session.user.id === id && token !== keepToken) {
-      sessions.delete(token);
-    }
+async function getSession(token) {
+  if (!token) return null;
+  const session = await prisma.session.findUnique({
+    where: { id: token },
+    include: { user: true },
+  });
+  if (!session) return null;
+  // Update lastActive
+  await prisma.session.update({
+    where: { id: token },
+    data: { lastActive: new Date() },
+  }).catch(() => {});
+  return publicUser(session.user);
+}
+
+async function deleteSession(token) {
+  await prisma.session.delete({ where: { id: token } }).catch(() => {});
+}
+
+async function getUserSessions(userId) {
+  const sessions = await prisma.session.findMany({
+    where: { userId: Number(userId) },
+    orderBy: { createdAt: 'desc' },
+  });
+  return sessions.map((s) => ({
+    id: s.id,
+    userId: s.userId,
+    ipAddress: s.ipAddress,
+    userAgent: s.userAgent,
+    createdAt: s.createdAt,
+    lastActive: s.lastActive,
+  }));
+}
+
+async function revokeAllUserSessions(userId, keepToken) {
+  await prisma.session.deleteMany({
+    where: { userId: Number(userId), id: { not: keepToken } },
+  });
+}
+
+async function createPasswordResetToken(email) {
+  const user = await prisma.user.findUnique({
+    where: { email: String(email).trim().toLowerCase() },
+  });
+  if (!user) return null;
+  await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+  const token = await prisma.passwordResetToken.create({
+    data: { userId: user.id, expiresAt },
+  });
+  return { token: token.id, userId: user.id };
+}
+
+async function resetPasswordWithToken(token, newPassword) {
+  const resetToken = await prisma.passwordResetToken.findUnique({ where: { id: token } });
+  if (!resetToken || resetToken.expiresAt < new Date()) {
+    throw new Error('Invalid or expired reset token');
   }
+  await prisma.user.update({
+    where: { id: resetToken.userId },
+    data: { passwordHash: await bcrypt.hash(String(newPassword), 10) },
+  });
+  await prisma.passwordResetToken.delete({ where: { id: token } });
 }
 
 module.exports = {
   createUser,
   getUserById,
   getUserByEmail,
-  verifyCredentials,
   getUserByUsername,
-  updateUser,
+  verifyCredentials,
+  updatePassword,
+  deleteUser,
   searchUsers,
   createSession,
   getSession,
   deleteSession,
   getUserSessions,
   revokeAllUserSessions,
+  createPasswordResetToken,
+  resetPasswordWithToken,
 };

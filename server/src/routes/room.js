@@ -1,4 +1,3 @@
-// rooms.js
 const router = require('express').Router();
 const c = require('../controllers/roomController');
 const { authenticate } = require('../middleware/authenticate');
@@ -12,6 +11,7 @@ router.put('/:roomId', authenticate, c.updateRoom);
 router.delete('/:roomId', authenticate, c.deleteRoom);
 router.post('/:roomId/join', authenticate, c.joinRoom);
 router.post('/:roomId/leave', authenticate, c.leaveRoom);
+router.post('/:roomId/read', authenticate, c.markRoomRead);
 router.get('/:roomId/members', authenticate, c.getMembers);
 router.delete('/:roomId/members/:userId', authenticate, c.removeMember);
 router.post('/:roomId/ban/:userId', authenticate, c.banUser);
