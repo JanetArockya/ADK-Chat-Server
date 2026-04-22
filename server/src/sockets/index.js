@@ -1,15 +1,16 @@
 const { getSession } = require('../utils/authStore');
+const prisma = require('../utils/prisma');
 
-// In-memory presence: userId -> Set of socketIds
+// userId -> Set of socketIds
 const userSockets = new Map();
-const socketAfkTimers = new Map();
+// socketId -> 'online' | 'afk'
+const socketStatus = new Map();
 const AFK_TIMEOUT = 60 * 1000;
 
 function getPresence(userId) {
   const sockets = userSockets.get(userId);
   if (!sockets || sockets.size === 0) return 'offline';
-  // If all sockets are AFK, user is AFK
-  const allAfk = [...sockets].every(sid => socketAfkTimers.get(sid) === 'afk');
+  const allAfk = [...sockets].every((sid) => socketStatus.get(sid) === 'afk');
   return allAfk ? 'afk' : 'online';
 }
 
@@ -20,50 +21,58 @@ function broadcastPresence(io, userId) {
 function initSocketHandlers(io) {
   io.use(async (socket, next) => {
     try {
-      const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(' ')[1];
+      const token =
+        socket.handshake.auth?.token ||
+        socket.handshake.headers?.authorization?.replace('Bearer ', '');
       if (!token) return next(new Error('Authentication required'));
-
-      const user = getSession(token);
+      const user = await getSession(token);
       if (!user) return next(new Error('Invalid session'));
-
       socket.userId = user.id;
       socket.username = user.username;
       next();
-    } catch (err) {
+    } catch {
       next(new Error('Auth failed'));
     }
   });
 
-  io.on('connection', (socket) => {
+  io.on('connection', async (socket) => {
     const { userId } = socket;
 
-    // Track socket
     if (!userSockets.has(userId)) userSockets.set(userId, new Set());
     userSockets.get(userId).add(socket.id);
-    socketAfkTimers.set(socket.id, 'online');
+    socketStatus.set(socket.id, 'online');
 
-    // Join personal room for DMs and notifications
     socket.join(`user:${userId}`);
     broadcastPresence(io, userId);
 
-    // Join room channels
+    // Send initial unread counts to the connected user
+    try {
+      const roomUnreads = await prisma.roomUnread.findMany({ where: { userId, count: { gt: 0 } } });
+      const dialogUnreads = await prisma.dialogUnread.findMany({ where: { userId, count: { gt: 0 } } });
+      const counts = [
+        ...roomUnreads.map((u) => ({ roomId: u.roomId, count: u.count })),
+        ...dialogUnreads.map((u) => ({ dialogId: u.dialogId, count: u.count })),
+      ];
+      if (counts.length > 0) {
+        socket.emit('unread:initial', counts);
+      }
+    } catch {}
+
     socket.on('room:join', (roomId) => socket.join(`room:${roomId}`));
     socket.on('room:leave', (roomId) => socket.leave(`room:${roomId}`));
     socket.on('dialog:join', (dialogId) => socket.join(`dialog:${dialogId}`));
 
-    // AFK detection
     socket.on('user:activity', () => {
-      const prev = socketAfkTimers.get(socket.id);
-      socketAfkTimers.set(socket.id, 'online');
+      const prev = socketStatus.get(socket.id);
+      socketStatus.set(socket.id, 'online');
       if (prev !== 'online') broadcastPresence(io, userId);
     });
 
     socket.on('user:afk', () => {
-      socketAfkTimers.set(socket.id, 'afk');
+      socketStatus.set(socket.id, 'afk');
       broadcastPresence(io, userId);
     });
 
-    // Typing indicators
     socket.on('typing:start', ({ roomId, dialogId }) => {
       const target = roomId ? `room:${roomId}` : `dialog:${dialogId}`;
       socket.to(target).emit('typing:start', { userId, username: socket.username, roomId, dialogId });
@@ -80,7 +89,7 @@ function initSocketHandlers(io) {
         sockets.delete(socket.id);
         if (sockets.size === 0) userSockets.delete(userId);
       }
-      socketAfkTimers.delete(socket.id);
+      socketStatus.delete(socket.id);
       broadcastPresence(io, userId);
     });
   });

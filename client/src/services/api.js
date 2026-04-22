@@ -1,24 +1,18 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
 });
 
-// Add token to requests
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+  if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
-// Handle response errors
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -26,11 +20,10 @@ api.interceptors.response.use(
       localStorage.removeItem('token');
       window.location.href = '/login';
     }
-    return Promise.reject(error);
+    return Promise.reject(error.response?.data || error);
   }
 );
 
-// Auth API
 export const authAPI = {
   register: (data) => api.post('/auth/register', data),
   login: (data) => api.post('/auth/login', data),
@@ -42,7 +35,6 @@ export const authAPI = {
   deleteAccount: () => api.delete('/auth/account'),
 };
 
-// Rooms API
 export const roomsAPI = {
   getPublicRooms: (query) => api.get('/rooms/public', { params: query }),
   getMyRooms: () => api.get('/rooms/my'),
@@ -53,6 +45,7 @@ export const roomsAPI = {
   deleteRoom: (roomId) => api.delete(`/rooms/${roomId}`),
   joinRoom: (roomId) => api.post(`/rooms/${roomId}/join`),
   leaveRoom: (roomId) => api.post(`/rooms/${roomId}/leave`),
+  markRead: (roomId) => api.post(`/rooms/${roomId}/read`),
   getMembers: (roomId) => api.get(`/rooms/${roomId}/members`),
   removeMember: (roomId, userId) => api.delete(`/rooms/${roomId}/members/${userId}`),
   banUser: (roomId, userId) => api.post(`/rooms/${roomId}/ban/${userId}`),
@@ -64,7 +57,6 @@ export const roomsAPI = {
   acceptInvite: (roomId) => api.post(`/rooms/${roomId}/invite/accept`),
 };
 
-// Messages API
 export const messagesAPI = {
   getRoomMessages: (roomId, params) => api.get(`/messages/room/${roomId}`, { params }),
   sendRoomMessage: (roomId, data) => api.post(`/messages/room/${roomId}`, data),
@@ -72,15 +64,16 @@ export const messagesAPI = {
   deleteMessage: (messageId) => api.delete(`/messages/${messageId}`),
 };
 
-// Dialogs API
 export const dialogsAPI = {
   getDialogs: () => api.get('/dialogs'),
   getDialog: (userId) => api.get(`/dialogs/with/${userId}`),
   getMessages: (dialogId, params) => api.get(`/dialogs/${dialogId}/messages`, { params }),
   sendMessage: (userId, data) => api.post(`/dialogs/${userId}/messages`, data),
+  editMessage: (messageId, data) => api.put(`/dialogs/messages/${messageId}`, data),
+  deleteMessage: (messageId) => api.delete(`/dialogs/messages/${messageId}`),
+  markRead: (dialogId) => api.post(`/dialogs/${dialogId}/read`),
 };
 
-// Friends API
 export const friendsAPI = {
   getFriends: () => api.get('/friends'),
   getFriendRequests: () => api.get('/friends/requests'),
@@ -93,35 +86,39 @@ export const friendsAPI = {
   unbanUser: (userId) => api.delete(`/friends/ban/${userId}`),
 };
 
-// Attachments API
 export const attachmentsAPI = {
-  uploadRoomAttachment: (roomId, file) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    return api.post(`/attachments/room/${roomId}`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
-  uploadDialogAttachment: (dialogId, file) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    return api.post(`/attachments/dialog/${dialogId}`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
-  downloadAttachment: (attachmentId) => api.get(`/attachments/${attachmentId}`),
+  uploadRoomAttachment: (roomId, formData) =>
+    api.post(`/attachments/room/${roomId}`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  uploadDialogAttachment: (dialogId, formData) =>
+    api.post(`/attachments/dialog/${dialogId}`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
 };
 
-// Sessions API
+export async function downloadAttachment(attachmentId, fileName) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE_URL}/attachments/${attachmentId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error('Download failed');
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export const sessionsAPI = {
   getSessions: () => api.get('/sessions'),
   revokeAllSessions: () => api.delete('/sessions/all'),
   revokeSession: (sessionId) => api.delete(`/sessions/${sessionId}`),
 };
 
-// Users API
 export const usersAPI = {
-  getUsers: (query) => api.get('/users', { params: query }),
+  searchUsers: (query) => api.get('/users/search', { params: { q: query } }),
+  getUser: (userId) => api.get(`/users/${userId}`),
 };
 
 export default api;
