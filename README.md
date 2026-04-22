@@ -311,6 +311,11 @@ The application uses Prisma ORM with a PostgreSQL database. Key entities:
 
 ## Testing
 
+Docker build:
+```bash
+docker-compose up --build -d
+```
+
 Frontend dev server with hot reload:
 
 ```bash
